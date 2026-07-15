@@ -1,0 +1,129 @@
+apiVersion: clickhouse.altinity.com/v1
+kind: ClickHouseInstallation
+metadata:
+  name: clickhouse
+  namespace: clickhouse
+spec:
+  defaults:
+    storageManagement:
+      provisioner: StatefulSet
+    templates:
+      dataVolumeClaimTemplate: storage
+      logVolumeClaimTemplate: storage
+      podTemplate: clickhouse
+      serviceTemplate: clickhouse
+      clusterServiceTemplate: clickhouse
+  configuration:
+    clusters:
+      - layout:
+          replicasCount: 2
+          shardsCount: 2
+        name: cluster
+        templates:
+          volumeClaimTemplate: storage
+          podTemplate: clickhouse
+          clusterServiceTemplate: clickhouse
+    zookeeper:
+      nodes:
+        - host: "zookeeper.clickhouse.svc.cluster.local"
+          port: 2181
+    users:
+      admin/k8s_secret_password: clickhouse/clickhouse-secrets/CLICKHOUSE_PASSWORD
+      # admin/password_sha256_hex:
+      #   valueFrom:
+      #     secretKeyRef:
+      #       name: clickhouse-secrets
+      #       key: CLICKHOUSE_PASSWORD
+      admin/profile: default
+      admin/quota: default
+      admin/networks/ip:
+        - "::/0"
+        - 127.0.0.1
+      admin/access_management: 1
+      admin/named_collection_control: 1
+      admin/show_named_collections: 1
+      admin/show_named_collections_secrets: 1
+    profiles:
+      # server level settings can be set here
+      admin/data_type_default_nullable: 1 # data types in column definitions are set to Nullable by default
+      admin/insert_distributed_sync: 1 # Data is inserted in synchronous mode
+      admin/mutations_sync: 2 # query waits for all mutations to complete on all replicas
+      admin/parallel_distributed_insert_select: 2 # SELECT and INSERT will be executed on each shard in parallel
+      admin/distributed_product_mode: allow # Allows the use of these types of subqueries
+    files:
+      users.d/remove_database_ordinary.xml: |
+        <yandex>
+          <profiles>
+              <default>
+                <default_database_engine remove="1"/>
+              </default>
+          </profiles>
+        </yandex>
+      config.d/merge_tree.xml: |-
+        <clickhouse>
+            <merge_tree>
+                <max_part_loading_threads>4</max_part_loading_threads>
+                <max_part_removal_threads>4</max_part_removal_threads>
+            </merge_tree>
+        </clickhouse>
+      config.d/log_rotation.xml: |-
+        <clickhouse>
+            <logger>
+                <level>information</level>
+                <log>/var/log/clickhouse-server/clickhouse-server.log</log>
+                <errorlog>/var/log/clickhouse-server/clickhouse-server.err.log</errorlog>
+                <size>100M</size>
+                <count>5</count>
+                <console>1</console>
+            </logger>
+        </clickhouse>
+  templates:
+    serviceTemplates:
+      - name: clickhouse
+        spec:
+          ports:
+            - name: http
+              port: 8123
+              protocol: TCP
+              targetPort: http
+            - name: tcp
+              port: 9000
+              protocol: TCP
+              targetPort: tcp
+          type: ClusterIP
+          ClusterIP: None
+    podTemplates:
+      - name: clickhouse
+        spec:
+          containers:
+            - name: clickhouse
+              image: clickhouse/clickhouse-server:24.3
+              ports:
+                - name: http
+                  containerPort: 8123
+                - name: client
+                  containerPort: 9000
+                - name: interserver
+                  containerPort: 9009
+              volumeMounts:
+                - name: storage
+                  mountPath: /var/lib/clickhouse
+                - name: storage
+                  mountPath: /var/log/clickhouse-server
+              resources:
+                requests:
+                  memory: 2Gi
+                  cpu: 1000m
+                limits:
+                  memory: 2Gi
+                  cpu: 1000m
+    volumeClaimTemplates:
+      - name: storage
+        provisioner: StatefulSet
+        reclaimPolicy: Retain
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 100Gi

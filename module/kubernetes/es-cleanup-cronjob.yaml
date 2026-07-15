@@ -1,0 +1,27 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  namespace: ${RESOURCE_NAMESPACE}
+  name: es-cleanup-cronjob
+spec:
+  # Run every day at 2AM to delete index older than 50 days
+  schedule: "0 2 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: es-cleanup-cronjob-pod
+              image: curlimages/curl:7.86.0
+              envFrom:
+                - secretRef:
+                    name: es-cleanup-cronjob-secrets
+              imagePullPolicy: Always
+              command: ["/bin/sh", "-c"]
+              # Will delete only 50 days older index. newer and older indexes will still be there.
+              # where 4320000 secs = 50 days
+              args:
+                [
+                  "export TODAY_DATE=$(date +%s) && export CLEAN_DATE=$(($TODAY_DATE-4320000)) && export CLEAN_DAY=$(date --date @$CLEAN_DATE '+%Y.%m.%d') && echo $CLEAN_DAY && curl -X DELETE -u $ELASTICSEARCH_USER:$ELASTICSEARCH_PASSWORD $ELASTICSEARCH_HOST/$ELASTICSEARCH_INDEX_TO_BE_DELETED-$CLEAN_DAY -k",
+                ]
+          restartPolicy: OnFailure

@@ -1,0 +1,371 @@
+# Ghost Namespac
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ghost
+  labels:
+    app: ghost
+    app.kubernetes.io/name: ghost
+    app.kubernetes.io/instance: ghost
+    app.kubernetes.io/version: "5.92"
+    app.kubernetes.io/component: namespace
+    app.kubernetes.io/part-of: ghost
+---
+# PVC for ghost
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ghost-pvc
+  namespace: ghost
+  labels:
+    app: ghost
+    app.kubernetes.io/name: ghost-pvc
+    app.kubernetes.io/instance: ghost
+    app.kubernetes.io/version: "5.92"
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/part-of: ghost
+spec:
+  # storageClassName: ""
+  # volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+# PVC for Ghost's mysql database
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ghost-mysql-pvc
+  namespace: ghost
+  labels:
+    app: ghost-mysql
+    app.kubernetes.io/name: ghost-mysql-pvc
+    app.kubernetes.io/instance: ghost
+    app.kubernetes.io/version: "5.92"
+    app.kubernetes.io/component: database-storage
+    app.kubernetes.io/part-of: ghost
+
+spec:
+  # storageClassName: ""
+  # volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+# Ghost service
+apiVersion: v1
+kind: Service
+metadata:
+  name: ghost-service
+  namespace: ghost
+  labels:
+    app: ghost
+    app.kubernetes.io/name: ghost-service
+    app.kubernetes.io/instance: ghost
+    app.kubernetes.io/version: "5.92"
+    app.kubernetes.io/component: service-frontend
+    app.kubernetes.io/part-of: ghost
+spec:
+  ports:
+    - port: 2368
+      protocol: TCP
+      targetPort: ghk8s
+      name: ghk8s
+  type: ClusterIP
+  selector:
+    app: ghost
+
+---
+# Mysql database service for ghost
+apiVersion: v1
+kind: Service
+metadata:
+  name: ghost-mysql-service
+  namespace: ghost
+  labels:
+    app: ghost-mysql
+    app.kubernetes.io/name: ghost-mysql-service
+    app.kubernetes.io/instance: ghost
+    app.kubernetes.io/version: "5.92"
+    app.kubernetes.io/component: service-database
+    app.kubernetes.io/part-of: ghost
+spec:
+  ports:
+    - port: 3306
+      protocol: TCP
+      targetPort: mysqlgh
+      name: mysqlgh
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: ghost-mysql
+---
+# Mysql database statefulset for ghost
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ghost-mysql
+  namespace: ghost
+  labels:
+    app: ghost-mysql
+    app.kubernetes.io/name: ghost-mysql
+    app.kubernetes.io/instance: ghost
+    app.kubernetes.io/version: "5.92"
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: ghost
+spec:
+  serviceName: ghost-mysql-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ghost-mysql
+  template:
+    metadata:
+      labels:
+        app: ghost-mysql
+    spec:
+      initContainers:
+        - name: ghost-mysql-init
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+          image: docker.io/busybox:stable-musl
+          imagePullPolicy: Always # You can change this value according to your needs
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo 'Changing ownership of mysql mount directory to 65534:65534'
+              chown -Rfv 65534:65534 /mnt/mysql || echo 'Error changing ownership of mysql mount directory to 65534:65534'
+              echo 'Changing ownership of tmp mount directory to 65534:65534'
+              chown -Rfv 65534:65534 /mnt/tmp || echo 'Error changing ownership of tmp mount directory to 65534:65534'
+              echo 'Changing ownership of socket mount directory to 65534:65534'
+              chown -Rfv 65534:65534 /mnt/var/run/mysqld || echo 'Error changing ownership of socket mount directory to 65534:65534'
+          volumeMounts:
+            - name: ghost-mysql-volume
+              mountPath: /mnt/mysql
+              subPath: mysql-empty-subdir
+              # readOnly: false
+            - name: ghost-mysql-tmp
+              mountPath: /mnt/tmp
+              # readOnly: false
+            - name: ghost-mysql-socket
+              mountPath: /mnt/var/run/mysqld
+              # readOnly: false
+          resources:
+            requests:
+              memory: 512Mi
+              cpu: 500m
+            limits:
+              memory: 512Mi
+              cpu: 500m
+      containers:
+        - name: ghost-mysql
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65534
+          image: docker.io/mysql:8.4
+          imagePullPolicy: Always
+          resources:
+            requests:
+              memory: 1Gi
+              cpu: 500m
+            limits:
+              memory: 2Gi
+              cpu: 1200m
+          envFrom:
+            - secretRef:
+                name: ghost-mysql-secrets
+          ports:
+            - containerPort: 3306
+              protocol: TCP
+              name: mysqlgh
+          volumeMounts:
+            - name: ghost-mysql-volume
+              mountPath: /var/lib/mysql
+              subPath: mysql-empty-subdir
+              # readOnly: false
+            - name: ghost-mysql-tmp
+              mountPath: /tmp
+              # readOnly: false
+            - name: ghost-mysql-socket
+              mountPath: /var/run/mysqld
+              # readOnly: false
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: ghost-mysql-volume
+          persistentVolumeClaim:
+            claimName: ghost-mysql-pvc
+        - name: ghost-mysql-tmp
+          emptyDir:
+            sizeLimit: 10Gi
+        - name: ghost-mysql-socket
+          emptyDir:
+            sizeLimit: 1Gi
+---
+# Ghost deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ghost
+  namespace: ghost
+  labels:
+    app: ghost
+    app.kubernetes.io/name: ghost
+    app.kubernetes.io/instance: ghost
+    app.kubernetes.io/version: "5.92"
+    app.kubernetes.io/component: ghost
+    app.kubernetes.io/part-of: ghost
+spec:
+  # If you want HA for your Ghost instance, you can increase the number of replicas AFTER creation and you need to adjust the storage class. See 02-pvc.yaml for more information.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ghost
+  minReadySeconds: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 3
+  revisionHistoryLimit: 4
+  progressDeadlineSeconds: 600
+  template:
+    metadata:
+      namespace: ghost
+      labels:
+        app: ghost
+    spec:
+      automountServiceAccountToken: false # Disable automounting of service account token
+      volumes:
+        - name: ghost-pvc
+          persistentVolumeClaim:
+            claimName: ghost-pvc
+        - name: ghost-config-secrets
+          secret:
+            secretName: ghost-config-secrets
+            defaultMode: 420
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Gi
+      initContainers:
+        - name: permissions-fix
+          imagePullPolicy: Always
+          image: docker.io/busybox:stable-musl
+          env:
+            - name: GHOST_INSTALL
+              value: /home/nonroot/app/ghost
+            - name: GHOST_CONTENT
+              value: /home/nonroot/app/ghost/content
+            - name: NODE_ENV
+              value: production
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 500m
+              memory: 512Mi
+          command:
+            - /bin/sh
+            - "-c"
+            - |
+              set -e
+
+              export DIRS='files logs apps themes data public settings images media'
+              echo 'Check if base dirs exists, if not, create them'
+              echo "Directories to check: $DIRS"
+              for dir in $DIRS; do
+                if [ ! -d $GHOST_CONTENT/$dir ]; then
+                  echo "Creating $GHOST_CONTENT/$dir directory"
+                  mkdir -pv $GHOST_CONTENT/$dir || echo "Error creating $GHOST_CONTENT/$dir directory"
+                fi
+                chown -Rfv 65532:65532 $GHOST_CONTENT/$dir && echo "chown ok on $dir" || echo "Error changing ownership of $GHOST_CONTENT/$dir directory"
+              done
+              exit 0
+          volumeMounts:
+            - name: ghost-pvc
+              mountPath: /home/nonroot/app/ghost/content
+              # readOnly: false
+      containers:
+        - name: ghost
+          image: ${GHOST_IMAGE_WITH_TAG}
+          imagePullPolicy: Always
+          ports:
+            - name: ghk8s
+              containerPort: 2368
+              protocol: TCP
+          # You should uncomment the following lines in production. Change the values according to your environment.
+          readinessProbe:
+            httpGet:
+              path: /ghost/api/v4/admin/site/
+              port: ghk8s
+              httpHeaders:
+                - name: X-Forwarded-Proto
+                  value: https
+                - name: Host
+                  value: blogs.gettruepower.in # Note: change this if you are using a different domain
+            periodSeconds: 10
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 3
+            initialDelaySeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /ghost/api/v4/admin/site/
+              port: ghk8s
+              httpHeaders:
+                - name: X-Forwarded-Proto
+                  value: https
+                - name: Host
+                  value: blogs.gettruepower.in
+            periodSeconds: 300
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 1
+            initialDelaySeconds: 30
+          env:
+            - name: NODE_ENV
+              value: production
+          resources:
+            limits:
+              cpu: 1200m
+              memory: 1Gi
+            requests:
+              cpu: 800m
+              memory: 1Gi
+          volumeMounts:
+            - name: ghost-pvc
+              mountPath: /home/nonroot/app/ghost/content
+              # readOnly: false
+            - name: ghost-config-secrets
+              readOnly: true
+              mountPath: /home/nonroot/app/ghost/config.production.json
+              subPath: config.production.json
+            - name: tmp # This is the temporary volume mount to allow loading themes
+              mountPath: /tmp
+              # readOnly: false
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 65532
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 15
+      dnsPolicy: ClusterFirst
+      securityContext: {}

@@ -1,0 +1,26 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  namespace: ${RESOURCE_NAMESPACE}
+  name: pg-backup-cronjob
+spec:
+  # Backup the database every day at 2AM
+  schedule: "0 2 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: pg-backup-cronjob-pod
+              image: ${PG_BACKUP_CRONJOB_IMAGE_WITH_TAG}
+              envFrom:
+                - secretRef:
+                    name: pg-backup-cronjob-secrets
+              imagePullPolicy: Always
+              args:
+                - /bin/bash
+                - -c
+                - cd /home/root; ls; bash postgres-backup.sh;
+          # imagePullSecrets:
+          #   - name: IMAGE_PULL_SECRET_NAME
+          restartPolicy: OnFailure
