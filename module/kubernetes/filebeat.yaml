@@ -1,0 +1,127 @@
+apiVersion: beat.k8s.elastic.co/v1beta1
+kind: Beat
+metadata:
+  name: filebeat
+  namespace: elasticsearch
+spec:
+  type: filebeat
+  version: 8.5.2
+  elasticsearchRef:
+    name: elasticsearch
+  kibanaRef:
+    name: kibana
+  config:
+    output:
+      elasticsearch:
+        index: "filebeat-%{[agent.version]}-%{+yyyy.MM.dd}"
+        # enabled: true
+        # hosts: "elasticsearch-es-http.elasticsearch.cluster.local:9200"
+        # username: '${ELASTICSEARCH_USERNAME}'
+        # password: '${ELASTICSEARCH_PASSWORD}'
+        # protocol: https
+        # ssl:
+        #   verification_mode: "none"
+    setup.template:
+      name: "filebeat"
+      pattern: "filebeat-*"
+      enabled: false
+    filebeat:
+      autodiscover:
+        providers:
+          - type: kubernetes
+            node: ${NODE_NAME}
+            hints:
+              enabled: true
+              default_config:
+                type: container
+                paths:
+                  - "/var/log/containers/*${data.kubernetes.container.id}.log"
+    processors:
+      - add_cloud_metadata: {}
+      - add_host_metadata: {}
+  daemonSet:
+    podTemplate:
+      metadata:
+        creationTimestamp: null
+      spec:
+        serviceAccountName: filebeat
+        automountServiceAccountToken: true
+        terminationGracePeriodSeconds: 30
+        dnsPolicy: ClusterFirstWithHostNet
+        hostNetwork: true
+        containers:
+          - name: filebeat
+            resources:
+              requests:
+                memory: 512Mi
+                cpu: 1000m
+              limits:
+                memory: 768Mi
+                cpu: 1200m
+            securityContext:
+              runAsUser: 0
+            volumeMounts:
+              - name: varlogcontainers
+                mountPath: /var/log/containers
+              - name: varlogpods
+                mountPath: /var/log/pods
+              - name: varlibdockercontainers
+                mountPath: /var/lib/docker/containers
+            env:
+              - name: NODE_NAME
+                valueFrom:
+                  fieldRef:
+                    fieldPath: spec.nodeName
+        volumes:
+          - name: varlogcontainers
+            hostPath:
+              path: /var/log/containers
+          - name: varlogpods
+            hostPath:
+              path: /var/log/pods
+          - name: varlibdockercontainers
+            hostPath:
+              path: /var/lib/docker/containers
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: filebeat
+rules:
+  - apiGroups: [""]
+    resources:
+      - namespaces
+      - pods
+      - nodes
+    verbs:
+      - get
+      - watch
+      - list
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: filebeat
+  namespace: elasticsearch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: filebeat
+subjects:
+  - kind: ServiceAccount
+    name: filebeat
+    namespace: elasticsearch
+roleRef:
+  kind: ClusterRole
+  name: filebeat
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: filebeat
+  namespace: elasticsearch
+  annotations:
+    kubernetes.io/service-account.name: filebeat
+type: kubernetes.io/service-account-token

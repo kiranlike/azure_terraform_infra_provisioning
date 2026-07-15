@@ -1,0 +1,43 @@
+{
+    "url": "${GHOST_HOST}",
+    "admin": {
+        "url": "${GHOST_HOST}"
+    },
+    "server": {
+        "port": 2368,
+        "host": "0.0.0.0"
+    },
+    "mail": {
+        "transport": "SMTP",
+        "from": "${SMTP_FROM}",
+        "options": {
+            "service": "TruePower",
+            "host": "${SMTP_HOST}",
+            "port": "${SMTP_PORT}",
+            "secure": false,
+            "auth": {
+                "user": "${SMTP_USER}",
+                "pass": "${SMTP_PASSWORD}"
+            }
+        }
+    },
+    "logging": {
+        "transports": [
+            "stdout"
+        ]
+    },
+    "database": {
+        "client": "mysql",
+        "connection": {
+            "host": "${MYSQL_HOST}",
+            "user": "${MYSQL_USER}",
+            "password": "${MYSQL_PASSWORD}",
+            "database": "${MYSQL_DATABASE}",
+            "port": "${MYSQL_PORT}"
+        }
+    },
+    "process": "local",
+    "paths": {
+        "contentPath": "/home/nonroot/app/ghost/content"
+    }
+}

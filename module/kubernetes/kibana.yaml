@@ -1,0 +1,22 @@
+apiVersion: kibana.k8s.elastic.co/v1
+kind: Kibana
+metadata:
+  name: kibana
+  namespace: elasticsearch
+spec:
+  version: 8.15.0
+  count: 1
+  config:
+    monitoring.ui.ccs.enabled: false
+    server:
+      publicBaseUrl: "https://kibana-dev.gettruepower.net"
+    xpack:
+      reporting:
+        csv:
+          maxSizeBytes: 56124000
+  http:
+    tls:
+      selfSignedCertificate:
+        disabled: true
+  elasticsearchRef:
+    name: elasticsearch
